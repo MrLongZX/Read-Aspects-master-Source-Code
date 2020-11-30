@@ -373,16 +373,24 @@ static void aspect_cleanupHookedClassAndSelector(NSObject *self, SEL selector) {
 
 static Class aspect_hookClass(NSObject *self, NSError **error) {
     NSCParameterAssert(self);
+    // self.class:当self是实例对象的时候，返回的是类对象，否则则返回自身
+    // object_getClass:获得的是isa的指针
+    // 当self是实例对象时，self.class和object_getClass(self)相同，都是指向其类
+    // 当self为类对象时，self.class是自身类，object_getClass(self)则是其元类
 	Class statedClass = self.class;
 	Class baseClass = object_getClass(self);
+    // 类名
 	NSString *className = NSStringFromClass(baseClass);
 
     // Already subclassed
+    // 判断是否已子类化过(类后缀为_Aspects_)
 	if ([className hasSuffix:AspectsSubclassSuffix]) {
 		return baseClass;
 
         // We swizzle a class object, not a single object.
+        // baseClass是元类，即self是类对象
 	}else if (class_isMetaClass(baseClass)) {
+        // 替换forwardInvocation方法
         return aspect_swizzleClassInPlace((Class)self);
         // Probably a KVO'ed class. Swizzle in place. Also swizzle meta classes in place.
     }else if (statedClass != baseClass) {
@@ -411,10 +419,14 @@ static Class aspect_hookClass(NSObject *self, NSError **error) {
 	return subclass;
 }
 
+// 类对象交互 forwardinvation 方法
 static NSString *const AspectsForwardInvocationSelectorName = @"__aspects_forwardInvocation:";
 static void aspect_swizzleForwardInvocation(Class klass) {
     NSCParameterAssert(klass);
     // If there is no method, replace will act like class_addMethod.
+    // 使用 __ASPECTS_ARE_BEING_CALLED__ 替换子类的 forwardInvocation 方法实现
+    // 由于子类本身并没有实现 forwardInvocation ，
+    // 所以返回的 originalImplementation 将为空值，所以子类也不会生成 AspectsForwardInvocationSelectorName 这个方法
     IMP originalImplementation = class_replaceMethod(klass, @selector(forwardInvocation:), (IMP)__ASPECTS_ARE_BEING_CALLED__, "v@:@");
     if (originalImplementation) {
         class_addMethod(klass, NSSelectorFromString(AspectsForwardInvocationSelectorName), originalImplementation, "v@:@");
@@ -450,8 +462,10 @@ static void _aspect_modifySwizzledClasses(void (^block)(NSMutableSet *swizzledCl
     static NSMutableSet *swizzledClasses;
     static dispatch_once_t pred;
     dispatch_once(&pred, ^{
+        // 交互类集合
         swizzledClasses = [NSMutableSet new];
     });
+    // 加锁
     @synchronized(swizzledClasses) {
         block(swizzledClasses);
     }
@@ -459,11 +473,16 @@ static void _aspect_modifySwizzledClasses(void (^block)(NSMutableSet *swizzledCl
 
 static Class aspect_swizzleClassInPlace(Class klass) {
     NSCParameterAssert(klass);
+    // 获取类名
     NSString *className = NSStringFromClass(klass);
 
+    // 需要要交换的类
     _aspect_modifySwizzledClasses(^(NSMutableSet *swizzledClasses) {
+        // 如果交互类集合不包含类名
         if (![swizzledClasses containsObject:className]) {
+            //
             aspect_swizzleForwardInvocation(klass);
+            // 交互类集合添加类名
             [swizzledClasses addObject:className];
         }
     });
@@ -498,6 +517,7 @@ for (AspectIdentifier *aspect in aspects) {\
 static void __ASPECTS_ARE_BEING_CALLED__(__unsafe_unretained NSObject *self, SEL selector, NSInvocation *invocation) {
     NSCParameterAssert(self);
     NSCParameterAssert(invocation);
+    
     SEL originalSelector = invocation.selector;
 	SEL aliasSelector = aspect_aliasForSelector(invocation.selector);
     invocation.selector = aliasSelector;
@@ -633,58 +653,80 @@ static BOOL aspect_isSelectorAllowedAndTrack(NSObject *self, SEL selector, Aspec
     }
 
     // Search for the current class and the class hierarchy IF we are modifying a class object
-    // 对类对象的类层级进行判断，防止一个方法被多次hook;实例对象无须考虑
+    // 对类对象的类层级进行判断，防止一个方法被多次hook
     // object_getClass:获取self的类对象，class_isMetaClass：是否是元类
     if (class_isMetaClass(object_getClass(self))) {
+        // 记录当前类
         Class klass = [self class];
-        // 记录所有被hook的Class的字典
+        // 进行了hook的类的字典：key:class value:AspectTracker对象
         NSMutableDictionary *swizzledClassesDict = aspect_getSwizzledClassesDict();
         // 当前类
         Class currentClass = [self class];
 
-        // 根据类获取切面追踪对象
+        // 根据当前类获取切面追踪对象
         AspectTracker *tracker = swizzledClassesDict[currentClass];
         // 判断子类是否已经hook该方法
         if ([tracker subclassHasHookedSelectorName:selectorName]) {
+            // 已经进行了hook
+            // 子类切面追踪对象集合
             NSSet *subclassTracker = [tracker subclassTrackersHookingSelectorName:selectorName];
+            // 通过kvc获取当前追踪的类的类名集合
             NSSet *subclassNames = [subclassTracker valueForKey:@"trackedClassName"];
             NSString *errorDescription = [NSString stringWithFormat:@"Error: %@ already hooked subclasses: %@. A method can only be hooked once per class hierarchy.", selectorName, subclassNames];
             AspectError(AspectErrorSelectorAlreadyHookedInClassHierarchy, errorDescription);
             return NO;
         }
 
+        // 沿着类对象的superClass指针向上寻到直到根类
         do {
+            // 根据当前类获取切面追踪对象
             tracker = swizzledClassesDict[currentClass];
+            // 切面追踪对象的方法名称集合是否包含需要hook的方法
             if ([tracker.selectorNames containsObject:selectorName]) {
                 if (klass == currentClass) {
                     // Already modified and topmost!
+                    // 已修改，且位于最上方
                     return YES;
                 }
                 NSString *errorDescription = [NSString stringWithFormat:@"Error: %@ already hooked in %@. A method can only be hooked once per class hierarchy.", selectorName, NSStringFromClass(currentClass)];
                 AspectError(AspectErrorSelectorAlreadyHookedInClassHierarchy, errorDescription);
                 return NO;
             }
+        // 当前类改为父类
         } while ((currentClass = class_getSuperclass(currentClass)));
 
         // Add the selector as being modified.
+        // 添加方法作为修改
+        // 当前类
         currentClass = klass;
+        // 子类切面追踪对象
         AspectTracker *subclassTracker = nil;
         do {
+            // 根据当前类获取切面追踪对象
             tracker = swizzledClassesDict[currentClass];
+            // 当前类没有进行hook，所以切面追踪对象为空
             if (!tracker) {
+                // 根据当前类，创建切面追踪对象
                 tracker = [[AspectTracker alloc] initWithTrackedClass:currentClass];
+                // 保存切面追踪对象 到 记录所有被hook的Class的字典
                 swizzledClassesDict[(id<NSCopying>)currentClass] = tracker;
             }
+            // 子类切面追踪对象是否存在
             if (subclassTracker) {
+                // 存在，保存子类切面追踪对象
                 [tracker addSubclassTracker:subclassTracker hookingSelectorName:selectorName];
             } else {
+                // 不存在，保存进hook的方法名称
                 [tracker.selectorNames addObject:selectorName];
             }
 
             // All superclasses get marked as having a subclass that is modified.
+            // 切面追踪对象改为子类切面追踪对象，目的是让其所有的父类都被标记，具有已修改的子类
             subclassTracker = tracker;
+        // 当前类改为父类
         }while ((currentClass = class_getSuperclass(currentClass)));
 	} else {
+        // 实例对象，直接返回YES
 		return YES;
 	}
 
@@ -723,17 +765,18 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
         _trackedClass = trackedClass;
         // 初始化方法名称集合
         _selectorNames = [NSMutableSet new];
-        // 子类追踪hook方法名称字典
+        // 子类追踪hook方法名称字典：key:selectorName value:tracker set
         _selectorNamesToSubclassTrackers = [NSMutableDictionary new];
     }
     return self;
 }
 
+// 子类是否已经hook此方法
 - (BOOL)subclassHasHookedSelectorName:(NSString *)selectorName {
     return self.selectorNamesToSubclassTrackers[selectorName] != nil;
 }
 
-// 根据方法名称，保存切面追踪对象
+// 根据方法名称，保存子类切面追踪对象
 - (void)addSubclassTracker:(AspectTracker *)subclassTracker hookingSelectorName:(NSString *)selectorName {
     // 根据方法名称，获取追踪对象集合
     NSMutableSet *trackerSet = self.selectorNamesToSubclassTrackers[selectorName];
@@ -744,22 +787,36 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
         // 根据方法名称，保存追踪对象集合
         self.selectorNamesToSubclassTrackers[selectorName] = trackerSet;
     }
-    // 在追踪对象集合中，保存最新
+    // 在追踪对象集合中，保存子类切面追踪对象
     [trackerSet addObject:subclassTracker];
 }
+
+// 根据方法名称，移除切面追踪对象
 - (void)removeSubclassTracker:(AspectTracker *)subclassTracker hookingSelectorName:(NSString *)selectorName {
+    // 根据方法名称，获取追踪对象集合
     NSMutableSet *trackerSet = self.selectorNamesToSubclassTrackers[selectorName];
+    // 在追踪对象集合中，移除切面追踪对象
     [trackerSet removeObject:subclassTracker];
+    // 如果追踪对象集合为空
     if (trackerSet.count == 0) {
+        // 在子类追踪hook方法名称字典中移除此方法名称键值对
         [self.selectorNamesToSubclassTrackers removeObjectForKey:selectorName];
     }
 }
+
+// 此方法是一个并查集，传入一个selectorName，通过递归查找，找到所有包含这个selectorName的set，最后把这些set合并在一起作为返回值返回。
 - (NSSet *)subclassTrackersHookingSelectorName:(NSString *)selectorName {
+    // 新建hook中的子类追踪对象集合
     NSMutableSet *hookingSubclassTrackers = [NSMutableSet new];
+    // 根据方法名称，获取追踪对象集合，遍历集合
     for (AspectTracker *tracker in self.selectorNamesToSubclassTrackers[selectorName]) {
+        // 如果追踪对象的方法名称集合中，包含入参方法名称
         if ([tracker.selectorNames containsObject:selectorName]) {
+            // 将追踪对象添加到新建的集合
             [hookingSubclassTrackers addObject:tracker];
         }
+        // unionSet：hookingSubclassTrackers取并集
+        // subclassTrackersHookingSelectorName：递归调用此方法
         [hookingSubclassTrackers unionSet:[tracker subclassTrackersHookingSelectorName:selectorName]];
     }
     return hookingSubclassTrackers;
