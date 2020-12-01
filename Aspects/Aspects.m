@@ -47,7 +47,8 @@ typedef struct _AspectBlock {
 @end
 
 // Tracks a single aspect.
-// 一个 Aspect 的具体内容
+//  Aspect标识，包含一次完整Aspect的所有内容
+//  内部实现了remove方法，需要使用遵守AspectToken即可
 @interface AspectIdentifier : NSObject
 + (instancetype)identifierWithSelector:(SEL)selector object:(id)object options:(AspectOptions)options block:(id)block error:(NSError **)error;
 - (BOOL)invokeWithInfo:(id<AspectInfo>)info;
@@ -59,7 +60,8 @@ typedef struct _AspectBlock {
 @end
 
 // Tracks all aspects for an object/class.
-// 一个对象或者类的所有的 Aspects 整体情况
+//  AspectsContainer是一个对象或者类的所有的 Aspects 的容器
+//  每次注入Aspects时会将其按照option里的时机放到对应数组中，方便后续的统一管理(例如移除)
 @interface AspectsContainer : NSObject
 - (void)addAspect:(AspectIdentifier *)aspect withOptions:(AspectOptions)injectPosition;
 - (BOOL)removeAspect:(id)aspect;
@@ -83,6 +85,7 @@ typedef struct _AspectBlock {
 - (NSSet *)subclassTrackersHookingSelectorName:(NSString *)selectorName;
 @end
 
+//  给NSInvocation添加分类，用来获取所有参数
 @interface NSInvocation (Aspects)
 - (NSArray *)aspects_arguments;
 @end
