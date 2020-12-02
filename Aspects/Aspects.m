@@ -598,6 +598,7 @@ static void __ASPECTS_ARE_BEING_CALLED__(__unsafe_unretained NSObject *self, SEL
     AspectsContainer *objectContainer = objc_getAssociatedObject(self, aliasSelector);
     // 获取类对象或元类对象，别名方法对应的切面容器对象
     AspectsContainer *classContainer = aspect_getContainerForClass(object_getClass(self), aliasSelector);
+    // 保存（对象或类对象）self与别名方法的调用对象
     AspectInfo *info = [[AspectInfo alloc] initWithInstance:self invocation:invocation];
     NSArray *aspectsToRemove = nil;
 
@@ -946,12 +947,16 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
 @implementation NSInvocation (Aspects)
 
 // Thanks to the ReactiveCocoa team for providing a generic solution for this.
+// 根据位置，获取参数
 - (id)aspect_argumentAtIndex:(NSUInteger)index {
+    // index位置的参数的类型编码
 	const char *argType = [self.methodSignature getArgumentTypeAtIndex:index];
 	// Skip const type qualifier.
+    // 跳过 const 类型限定符
 	if (argType[0] == _C_CONST) argType++;
 
 #define WRAP_AND_RETURN(type) do { type val = 0; [self getArgument:&val atIndex:(NSInteger)index]; return @(val); } while (0)
+    // strcmp(,):字符串比较，值等于0表示两个字符串相等
 	if (strcmp(argType, @encode(id)) == 0 || strcmp(argType, @encode(Class)) == 0) {
 		__autoreleasing id returnObj;
 		[self getArgument:&returnObj atIndex:(NSInteger)index];
@@ -1012,6 +1017,7 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
 #undef WRAP_AND_RETURN
 }
 
+// 获取参数组成的数组
 - (NSArray *)aspects_arguments {
 	NSMutableArray *argumentsArray = [NSMutableArray array];
 	for (NSUInteger idx = 2; idx < self.methodSignature.numberOfArguments; idx++) {
@@ -1177,13 +1183,14 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
     NSCParameterAssert(instance);
     NSCParameterAssert(invocation);
     if (self = [super init]) {
-        // 保存被hook的对象与调用方法
+        // 保存被hook的对象与原始调用对象
         _instance = instance;
         _originalInvocation = invocation;
     }
     return self;
 }
 
+// 获取原始调用对象的参数组成的数组
 - (NSArray *)arguments {
     // Lazily evaluate arguments, boxing is expensive.
     if (!_arguments) {
