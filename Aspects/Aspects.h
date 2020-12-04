@@ -19,7 +19,7 @@ typedef NS_OPTIONS(NSUInteger, AspectOptions) {
 /// Opaque Aspect Token that allows to deregister the hook.
 @protocol AspectToken <NSObject>
 
-/// Deregisters an aspect.
+/// Deregisters an aspect. 取消一个切面对象的注册
 /// @return YES if deregistration is successful, otherwise NO.
 - (BOOL)remove;
 
