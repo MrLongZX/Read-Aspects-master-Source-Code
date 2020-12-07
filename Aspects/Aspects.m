@@ -44,6 +44,7 @@ struct Block_descriptor {
  BLOCK_HAS_EXTENDED_LAYOUT=(1 << 31)  // compiler
  };
  */
+// 定义这个结构体只有一个目的：拿到block的方法签名，也就是获取signature字段的值。拿到方法签名你就可以使用NSInvocation调用这个block
 typedef NS_OPTIONS(int, AspectBlockFlags) {
 	AspectBlockFlagsHasCopyDisposeHelpers = (1 << 25),
 	AspectBlockFlagsHasSignature          = (1 << 30)
@@ -223,7 +224,7 @@ static SEL aspect_aliasForSelector(SEL selector) {
 	return NSSelectorFromString([AspectsMessagePrefix stringByAppendingFormat:@"_%@", NSStringFromSelector(selector)]);
 }
 
-// 将block转换为方法签名
+// 获取block的方法签名
 static NSMethodSignature *aspect_blockMethodSignature(id block, NSError **error) {
     AspectBlockRef layout = (__bridge void *)block;
 	if (!(layout->flags & AspectBlockFlagsHasSignature)) {
@@ -304,6 +305,12 @@ static BOOL aspect_isMsgForwardIMP(IMP impl) {
 }
 
 // 获取msgForward imp
+// 根据selector返回值类型获取_objc_msgForward或者_objc_msgForward_stret
+// 如果转发的消息的返回值是struct类型，就使用_objc_msgForward_stret，否则使用_objc_msgForward
+/*
+简单引用JSPatch作者的解释
+大多数CPU在执行C函数时会把前几个参数放进寄存器里，对 obj_msgSend 来说前两个参数固定是 self / _cmd，它们会放在寄存器上，在最后执行完后返回值也会保存在寄存器上，取这个寄存器的值就是返回值。普通的返回值(int/pointer)很小，放在寄存器上没问题，但有些 struct 是很大的，寄存器放不下，所以要用另一种方式，在一开始申请一段内存，把指针保存在寄存器上，返回值往这个指针指向的内存写数据，所以寄存器要腾出一个位置放这个指针，self / _cmd 在寄存器的位置就变了。objc_msgSend 不知道 self / _cmd 的位置变了，所以要用另一个方法 objc_msgSend_stret 代替。原理大概就是这样。在 NSMethodSignature 的 debugDescription 上打出了是否 special struct，只能通过这字符串判断。所以最终的处理是，在非 arm64 下，是 special struct 就走 _objc_msgForward_stret，否则走 _objc_msgForward。
+*/
 static IMP aspect_getMsgForwardIMP(NSObject *self, SEL selector) {
     IMP msgForwardIMP = _objc_msgForward;
 #if !defined(__arm64__)
@@ -617,15 +624,15 @@ for (AspectIdentifier *aspect in aspects) {\
 static void __ASPECTS_ARE_BEING_CALLED__(__unsafe_unretained NSObject *self, SEL selector, NSInvocation *invocation) {
     NSCParameterAssert(self);
     NSCParameterAssert(invocation);
-    // 进行hook的方法
+    // 要hook的方法
     SEL originalSelector = invocation.selector;
-    // 进行hook的方法的别名方法
+    // 要hook的方法的别名方法
 	SEL aliasSelector = aspect_aliasForSelector(invocation.selector);
     // 别名方法代替原方法
     invocation.selector = aliasSelector;
-    // 根据别名方法 通过关联对象 获得切面容器对象
+    // 获取实例对象， 别名方法对应的切面容器对象
     AspectsContainer *objectContainer = objc_getAssociatedObject(self, aliasSelector);
-    // 获取类对象或元类对象，别名方法对应的切面容器对象
+    // 获取类对象，别名方法对应的切面容器对象
     AspectsContainer *classContainer = aspect_getContainerForClass(object_getClass(self), aliasSelector);
     // 保存（对象或类对象）self与别名方法的调用对象
     AspectInfo *info = [[AspectInfo alloc] initWithInstance:self invocation:invocation];
@@ -1093,7 +1100,7 @@ static void aspect_deregisterTrackedSelector(id self, SEL selector) {
 - (BOOL)invokeWithInfo:(id<AspectInfo>)info {
     // 通过block的方法签名生成对应的调用对象
     NSInvocation *blockInvocation = [NSInvocation invocationWithMethodSignature:self.blockSignature];
-    // 被hook的原方法调用对象
+    // 要hook的原方法调用对象
     NSInvocation *originalInvocation = info.originalInvocation;
     // block的参数数量
     NSUInteger numberOfArguments = self.blockSignature.numberOfArguments;
