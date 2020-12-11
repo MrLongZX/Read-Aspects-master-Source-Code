@@ -5,6 +5,15 @@
 //  Copyright (c) 2014 Peter Steinberger. Licensed under the MIT license.
 //
 
+/*
+参考文章：
+[面向切面编程之 Aspects 源码解析及应用](https://wereadteam.github.io/2016/06/30/Aspects/)
+[iOS Aspects源码剖析](https://juejin.cn/post/6844903522102673421)
+源码分析：
+[https://github.com/SimonYHB/iOS-Framework-Analysis/tree/master/framework/Aspects]
+[https://github.com/hejunm/aspectSourceCodeAnalysis/tree/master/AspectTest]
+ */
+
 #import <Foundation/Foundation.h>
 
 // block 执行的时机
