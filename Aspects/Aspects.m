@@ -173,7 +173,7 @@ static id aspect_add(id self, SEL selector, AspectOptions options, id block, NSE
                 [aspectContainer addAspect:identifier withOptions:options];
 
                 // Modify the class to allow message interception.
-                // 修改这个类实现允许消息拦截
+                // 修改这个对象或类实现允许消息拦截
                 aspect_prepareClassAndHookSelector(self, selector, error);
             }
         }
@@ -653,7 +653,7 @@ static void __ASPECTS_ARE_BEING_CALLED__(__unsafe_unretained NSObject *self, SEL
         // 类对象或元类，调用hook方法的目标对象类
         Class klass = object_getClass(invocation.target);
         do {
-            // 目标类能否响应别名方法
+            // 目标类能否响应别名方法，别名方法指向了要hook方法的实现
             if ((respondsToAlias = [klass instancesRespondToSelector:aliasSelector])) {
                 // 能响应，则进行调用
                 [invocation invoke];
@@ -787,11 +787,11 @@ static BOOL aspect_isSelectorAllowedAndTrack(NSObject *self, SEL selector, Aspec
 
     // Search for the current class and the class hierarchy IF we are modifying a class object
     // 对类对象的类层级进行判断，防止一个方法被多次hook
-    // object_getClass:获取self的类对象，class_isMetaClass：是否是元类
+    // object_getClass:获取self的isa指针，class_isMetaClass：是否是元类
     if (class_isMetaClass(object_getClass(self))) {
         // 记录当前类
         Class klass = [self class];
-        // 进行了hook的类的字典：key:class value:AspectTracker对象
+        // 对类hook的字典：key:class value:AspectTracker对象
         NSMutableDictionary *swizzledClassesDict = aspect_getSwizzledClassesDict();
         // 当前类
         Class currentClass = [self class];
